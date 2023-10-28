@@ -1,24 +1,26 @@
 #!/usr/bin/env python3
 from asyncio import gather
 from json import loads
-from secrets import token_hex
+from secrets import token_urlsafe
 
-from bot import bot_cache, download_dict, download_dict_lock, queue_dict_lock, non_queued_dl, LOGGER
+from bot import (config_dict, LOGGER, download_dict, download_dict_lock, non_queued_dl,
+                 queue_dict_lock)
 from bot.helper.ext_utils.bot_utils import cmd_exec
-from bot.helper.telegram_helper.message_utils import sendMessage, sendStatusMessage
 from bot.helper.ext_utils.task_manager import is_queued, stop_duplicate_check
-from bot.helper.mirror_utils.status_utils.rclone_status import RcloneStatus
-from bot.helper.mirror_utils.status_utils.queue_status import QueueStatus
 from bot.helper.mirror_utils.rclone_utils.transfer import RcloneTransferHelper
+from bot.helper.mirror_utils.status_utils.queue_status import QueueStatus
+from bot.helper.mirror_utils.status_utils.rclone_status import RcloneStatus
+from bot.helper.telegram_helper.message_utils import (sendMessage, delete_links,
+                                                      sendStatusMessage, auto_delete_message)
 
 
 async def add_rclone_download(rc_path, config_path, path, name, listener):
     remote, rc_path = rc_path.split(':', 1)
     rc_path = rc_path.strip('/')
 
-    cmd1 = [bot_cache['pkgs'][3], 'lsjson', '--fast-list', '--stat', '--no-mimetype',
+    cmd1 = ['zcl', 'lsjson', '--fast-list', '--stat', '--no-mimetype',
             '--no-modtime', '--config', config_path, f'{remote}:{rc_path}']
-    cmd2 = [bot_cache['pkgs'][3], 'size', '--fast-list', '--json',
+    cmd2 = ['zcl', 'size', '--fast-list', '--json',
             '--config', config_path, f'{remote}:{rc_path}']
     res1, res2 = await gather(cmd_exec(cmd1), cmd_exec(cmd2))
     if res1[2] != res2[2] != 0:
@@ -40,10 +42,13 @@ async def add_rclone_download(rc_path, config_path, path, name, listener):
     else:
         name = rc_path.rsplit('/', 1)[-1]
     size = rsize['bytes']
-    gid = token_hex(5)
+    gid = token_urlsafe(12)
+
     msg, button = await stop_duplicate_check(name, listener)
     if msg:
-        await sendMessage(listener.message, msg, button)
+        rmsg = await sendMessage(listener.message, msg, button)
+        await delete_links(listener.message)
+        await auto_delete_message(listener.message, rmsg)
         return
 
     added_to_queue, event = await is_queued(listener.uid)
@@ -65,7 +70,7 @@ async def add_rclone_download(rc_path, config_path, path, name, listener):
     RCTransfer = RcloneTransferHelper(listener, name)
     async with download_dict_lock:
         download_dict[listener.uid] = RcloneStatus(
-            RCTransfer, listener.message, gid, 'dl', listener.upload_details)
+            RCTransfer, listener.message, gid, 'dl', listener.extra_details)
     async with queue_dict_lock:
         non_queued_dl.add(listener.uid)
 

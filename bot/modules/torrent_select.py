@@ -1,50 +1,67 @@
 #!/usr/bin/env python3
-from contextlib import suppress
-from pyrogram.handlers import MessageHandler, CallbackQueryHandler
-from pyrogram.filters import regex
-from aiofiles.os import remove as aioremove, path as aiopath
+from aiofiles.os import path as aiopath
+from aiofiles.os import remove as aioremove
+from pyrogram.filters import command, regex
+from pyrogram.handlers import CallbackQueryHandler, MessageHandler
 
-from bot import bot, bot_name, aria2, download_dict, download_dict_lock, OWNER_ID, user_data, LOGGER
+from bot import LOGGER, aria2, bot, download_dict, download_dict_lock
+from bot.helper.ext_utils.help_messages import TOR_SEL_HELP_MESSAGE
+from bot.helper.ext_utils.bot_utils import (MirrorStatus, bt_selection_buttons,
+                                            getDownloadByGid, sync_to_async)
 from bot.helper.telegram_helper.bot_commands import BotCommands
 from bot.helper.telegram_helper.filters import CustomFilters
-from bot.helper.telegram_helper.message_utils import sendMessage, sendStatusMessage, deleteMessage
-from bot.helper.ext_utils.bot_utils import getDownloadByGid, MirrorStatus, bt_selection_buttons, sync_to_async
+from bot.helper.telegram_helper.message_utils import (anno_checker, isAdmin,
+                                                      request_limiter, deleteMessage,
+                                                      auto_delete_message, delete_links,
+                                                      sendMessage,
+                                                      sendStatusMessage)
 
 
 async def select(client, message):
+    if not message.from_user:
+        message.from_user = await anno_checker(message)
+    if not message.from_user:
+        return
     user_id = message.from_user.id
-    msg = message.text.split('_', maxsplit=1)
+    if not await isAdmin(message, user_id) and await request_limiter(message):
+        return
+    msg = message.text.split()
     if len(msg) > 1:
-        cmd_data = msg[1].split('@', maxsplit=1)
-        if len(cmd_data) > 1 and cmd_data[1].strip() != bot_name:
-            return
-        gid = cmd_data[0]
+        gid = msg[1]
         dl = await getDownloadByGid(gid)
         if dl is None:
-            await sendMessage(message, f"GID: <code>{gid}</code> Not Found.")
+            tsmsg = await sendMessage(message, f"GID: <code>{gid}</code> Not Found.")
+            await delete_links(message)
+            await auto_delete_message(message, tsmsg)
             return
     elif reply_to_id := message.reply_to_message_id:
         async with download_dict_lock:
             dl = download_dict.get(reply_to_id, None)
         if dl is None:
-            await sendMessage(message, "This is not an active task!")
+            tsmsg = await sendMessage(message, "This is not an active task!")
+            await delete_links(message)
+            await auto_delete_message(message, tsmsg)
             return
     elif len(msg) == 1:
-        msg = ("Reply to an active /cmd which was used to start the qb-download or add gid along with cmd\n\n"
-               + "This command mainly for selection incase you decided to select files from already added torrent. "
-               + "But you can always use /cmd with arg `s` to select files before download start.")
-        await sendMessage(message, msg)
+        tsmsg = await sendMessage(message, TOR_SEL_HELP_MESSAGE.format_map({'cmd': BotCommands.BtSelectCommand, 'mir': BotCommands.MirrorCommand[0]}))
+        await delete_links(message)
+        await auto_delete_message(message, tsmsg)
         return
 
-    if OWNER_ID != user_id and dl.message.from_user.id != user_id and \
-       (user_id not in user_data or not user_data[user_id].get('is_sudo')):
-        await sendMessage(message, "This task is not for you!")
+    if not await CustomFilters.sudo(client, message) and dl.message.from_user.id != user_id:
+        tsmsg = await sendMessage(message, "This task is not for you!")
+        await delete_links(message)
+        await auto_delete_message(message, tsmsg)
         return
     if dl.status() not in [MirrorStatus.STATUS_DOWNLOADING, MirrorStatus.STATUS_PAUSED, MirrorStatus.STATUS_QUEUEDL]:
-        await sendMessage(message, 'Task should be in download or pause (incase message deleted by wrong) or queued (status incase you used torrent file)!')
+        tsmsg = await sendMessage(message, 'Task should be in download or pause (incase message deleted by wrong) or queued (status incase you used torrent file)!')
+        await delete_links(message)
+        await auto_delete_message(message, tsmsg)
         return
     if dl.name().startswith('[METADATA]'):
-        await sendMessage(message, 'Try after downloading metadata finished!')
+        tsmsg = await sendMessage(message, 'Try after downloading metadata finished!')
+        await delete_links(message)
+        await auto_delete_message(message, tsmsg)
         return
 
     try:
@@ -60,15 +77,18 @@ async def select(client, message):
                 try:
                     await sync_to_async(aria2.client.force_pause, id_)
                 except Exception as e:
-                    LOGGER.error(
-                        f"{e} Error in pause, this mostly happens after abuse aria2")
+                    LOGGER.error(f"{e} Error in pause, this mostly happens after abuse aria2")
         listener.select = True
-    except Exception:
-        await sendMessage(message, "This is not a bittorrent task!")
+    except:
+        tsmsg = await sendMessage(message, "This is not a bittorrent task!")
+        await delete_links(message)
+        await auto_delete_message(message, tsmsg)
         return
 
-    SBUTTONS = bt_selection_buttons(id_)
-    msg = "Your download paused. Choose files then press Done Selecting button to resume downloading."
+    SBUTTONS = bt_selection_buttons(id_, False)
+    msg = f"<b>Name</b>: <code>{dl.name()}</code>"
+    msg += f"\n\nYour download paused. Choose files then press Done Selecting "
+    msg += f"button to resume downloading.\n<b><i>Your download will not start automatically</i></b>"
     await sendMessage(message, msg, SBUTTONS)
 
 
@@ -103,16 +123,20 @@ async def get_confirm(client, query):
                     f_paths = [f"{path}/{f.name}", f"{path}/{f.name}.!qB"]
                     for f_path in f_paths:
                         if await aiopath.exists(f_path):
-                            with suppress(Exception):
+                            try:
                                 await aioremove(f_path)
+                            except:
+                                pass
             if not dl.queued:
                 await sync_to_async(client.torrents_resume, torrent_hashes=id_)
         else:
             res = await sync_to_async(aria2.client.get_files, id_)
             for f in res:
                 if f['selected'] == 'false' and await aiopath.exists(f['path']):
-                    with suppress(Exception):
+                    try:
                         await aioremove(f['path'])
+                    except:
+                        pass
             if not dl.queued:
                 try:
                     await sync_to_async(aria2.client.unpause, id_)
@@ -122,10 +146,10 @@ async def get_confirm(client, query):
         await deleteMessage(message)
     elif data[1] == "rm":
         await query.answer()
-        await (dl.download()).cancel_download()
+        obj = dl.download()
+        await obj.cancel_download()
         await deleteMessage(message)
 
 
-bot.add_handler(MessageHandler(select, filters=regex(
-    f"^/{BotCommands.BtSelectCommand}(_\w+)?") & CustomFilters.authorized & ~CustomFilters.blacklisted))
+bot.add_handler(MessageHandler(select, filters=command(BotCommands.BtSelectCommand) & CustomFilters.authorized))
 bot.add_handler(CallbackQueryHandler(get_confirm, filters=regex("^btsel")))

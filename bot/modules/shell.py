@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
-from pyrogram.handlers import MessageHandler, EditedMessageHandler
-from pyrogram.filters import command
 from io import BytesIO
 
+from pyrogram.filters import command
+from pyrogram.handlers import EditedMessageHandler, MessageHandler
+
 from bot import LOGGER, bot
-from bot.helper.telegram_helper.message_utils import sendMessage, sendFile
 from bot.helper.ext_utils.bot_utils import cmd_exec, new_task
-from bot.helper.telegram_helper.filters import CustomFilters
 from bot.helper.telegram_helper.bot_commands import BotCommands
+from bot.helper.telegram_helper.filters import CustomFilters
+from bot.helper.telegram_helper.message_utils import sendFile, sendMessage
 
 
 @new_task
@@ -20,14 +21,14 @@ async def shell(_, message):
     stdout, stderr, _ = await cmd_exec(cmd, shell=True)
     reply = ''
     if len(stdout) != 0:
-        reply += f"*Stdout*\n{stdout}\n"
+        reply += f"<b>{stdout}</b>\n"
         LOGGER.info(f"Shell - {cmd} - {stdout}")
     if len(stderr) != 0:
-        reply += f"*Stderr*\n{stderr}"
+        reply += f"*Stderr*\n<code>{stderr}</code>"
         LOGGER.error(f"Shell - {cmd} - {stderr}")
     if len(reply) > 3000:
         with BytesIO(str.encode(reply)) as out_file:
-            out_file.name = "shell_output.txt"
+            out_file.name = "Z_Shell.txt"
             await sendFile(message, out_file)
     elif len(reply) != 0:
         await sendMessage(message, reply)
@@ -35,7 +36,5 @@ async def shell(_, message):
         await sendMessage(message, 'No Reply')
 
 
-bot.add_handler(MessageHandler(shell, filters=command(
-    BotCommands.ShellCommand) & CustomFilters.sudo))
-bot.add_handler(EditedMessageHandler(shell, filters=command(
-    BotCommands.ShellCommand) & CustomFilters.sudo))
+bot.add_handler(MessageHandler(shell, filters=command(BotCommands.ShellCommand) & CustomFilters.owner))
+bot.add_handler(EditedMessageHandler(shell, filters=command(BotCommands.ShellCommand) & CustomFilters.owner))

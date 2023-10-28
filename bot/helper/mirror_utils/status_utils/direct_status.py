@@ -1,18 +1,20 @@
 #!/usr/bin/env python3
-
-from bot.helper.ext_utils.bot_utils import (EngineStatus, MirrorStatus,
+from bot import aria2
+from bot.helper.ext_utils.bot_utils import (MirrorStatus,
                                             get_readable_file_size,
                                             get_readable_time)
 
+engine_ = f"Aria2 v{aria2.client.get_version()['version']}"
 
 
 class DirectStatus:
-    def __init__(self, obj, gid, listener, upload_details):
+    def __init__(self, obj, gid, listener):
         self.__gid = gid
         self.__listener = listener
         self.__obj = obj
-        self.upload_details = upload_details
         self.message = self.__listener.message
+        self.extra_details = self.__listener.extra_details
+        self.engine = engine_
 
     def gid(self):
         return self.__gid
@@ -52,6 +54,3 @@ class DirectStatus:
 
     def download(self):
         return self.__obj
-
-    def eng(self):
-        return EngineStatus().STATUS_ARIA
