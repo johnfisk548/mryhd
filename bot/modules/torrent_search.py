@@ -1,24 +1,17 @@
 #!/usr/bin/env python3
+from pyrogram.handlers import MessageHandler, CallbackQueryHandler
+from pyrogram.filters import command, regex
+from aiohttp import ClientSession
 from html import escape
 from urllib.parse import quote
 
-from aiohttp import ClientSession
-from pyrogram.filters import command, regex
-from pyrogram.handlers import CallbackQueryHandler, MessageHandler
-
-from bot import LOGGER, bot, config_dict, get_client
-from bot.helper.ext_utils.bot_utils import (checking_access,
-                                            get_readable_file_size, new_task,
-                                            sync_to_async)
+from bot import bot, LOGGER, config_dict, get_client
+from bot.helper.telegram_helper.message_utils import editMessage, sendMessage
 from bot.helper.ext_utils.telegraph_helper import telegraph
-from bot.helper.telegram_helper.bot_commands import BotCommands
-from bot.helper.telegram_helper.button_build import ButtonMaker
 from bot.helper.telegram_helper.filters import CustomFilters
-from bot.helper.telegram_helper.message_utils import (anno_checker, deleteMessage,
-                                                      editMessage, isAdmin,
-                                                      auto_delete_message,
-                                                      request_limiter,
-                                                      delete_links, sendMessage)
+from bot.helper.telegram_helper.bot_commands import BotCommands
+from bot.helper.ext_utils.bot_utils import get_readable_file_size, sync_to_async, new_task, checking_access
+from bot.helper.telegram_helper.button_build import ButtonMaker
 
 PLUGINS = []
 SITES = None
@@ -83,9 +76,7 @@ async def __search(key, site, message, method):
                 async with c.get(api) as res:
                     search_results = await res.json()
             if 'error' in search_results or search_results['total'] == 0:
-                smsg = await editMessage(message, f"No result found for <i>{key}</i>\nTorrent Site:- <i>{SITES.get(site)}</i>")
-                await delete_links(message.reply_to_message)
-                await auto_delete_message(message, smsg)
+                await editMessage(message, f"No result found for <i>{key}</i>\nTorrent Site:- <i>{SITES.get(site)}</i>")
                 return
             msg = f"<b>Found {min(search_results['total'], TELEGRAPH_LIMIT)}</b>"
             if method == 'apitrend':
@@ -96,9 +87,7 @@ async def __search(key, site, message, method):
                 msg += f" <b>result(s) for <i>{key}</i>\nTorrent Site:- <i>{SITES.get(site)}</i></b>"
             search_results = search_results['data']
         except Exception as e:
-            smsg = await editMessage(message, str(e))
-            await delete_links(message.reply_to_message)
-            await auto_delete_message(message, smsg)
+            await editMessage(message, str(e))
             return
     else:
         LOGGER.info(f"PLUGINS Searching: {key} from {site}")
@@ -114,9 +103,7 @@ async def __search(key, site, message, method):
         search_results = dict_search_results.results
         total_results = dict_search_results.total
         if total_results == 0:
-            smsg = await editMessage(message, f"No result found for <i>{key}</i>\nTorrent Site:- <i>{site.capitalize()}</i>")
-            await delete_links(message.reply_to_message)
-            await auto_delete_message(message, smsg)
+            await editMessage(message, f"No result found for <i>{key}</i>\nTorrent Site:- <i>{site.capitalize()}</i>")
             return
         msg = f"<b>Found {min(total_results, TELEGRAPH_LIMIT)}</b>"
         msg += f" <b>result(s) for <i>{key}</i>\nTorrent Site:- <i>{site.capitalize()}</i></b>"
@@ -126,9 +113,7 @@ async def __search(key, site, message, method):
     buttons = ButtonMaker()
     buttons.ubutton("🔎 VIEW", link)
     button = buttons.build_menu(1)
-    smsg = await editMessage(message, msg, button)
-    await delete_links(message.reply_to_message)
-    await auto_delete_message(message, smsg)
+    await editMessage(message, msg, button)
 
 
 async def __getResult(search_results, key, message, method):
@@ -160,7 +145,7 @@ async def __getResult(search_results, key, message, method):
                     msg += f"<b>Size: </b>{result['size']}<br>"
                     try:
                         msg += f"<b>Seeders: </b>{result['seeders']} | <b>Leechers: </b>{result['leechers']}<br>"
-                    except:
+                    except Exception:
                         pass
                     if 'torrent' in result.keys():
                         msg += f"<a href='{result['torrent']}'>Direct Link</a><br><br>"
@@ -192,12 +177,12 @@ async def __getResult(search_results, key, message, method):
         telegraph_content.append(msg)
 
     await editMessage(message, f"<b>Creating</b> {len(telegraph_content)} <b>Telegraph pages.</b>")
-    path = [(await telegraph.create_page(title='Z Torrent Search',
+    path = [(await telegraph.create_page(title=f"{config_dict['TITLE_NAME']} Torrent Search",
                                          content=content))["path"] for content in telegraph_content]
     if len(path) > 1:
         await editMessage(message, f"<b>Editing</b> {len(telegraph_content)} <b>Telegraph pages.</b>")
         await telegraph.edit_telegraph(path, telegraph_content)
-    return f"https://graph.org/{path[0]}"
+    return f"https://telegra.ph/{path[0]}"
 
 
 def __api_buttons(user_id, method):
@@ -225,51 +210,24 @@ async def __plugin_buttons(user_id):
 
 
 async def torrentSearch(_, message):
-    if not message.from_user:
-        message.from_user = await anno_checker(message)
-    if not message.from_user:
-        return
-    if sender_chat := message.sender_chat:
-        tag = sender_chat.title
-    elif username := message.from_user.username:
-        tag = f"@{username}"
-    else:
-        tag = message.from_user.mention
-    if reply_to := message.reply_to_message:
-        if len(link) == 0:
-            link = reply_to.text.split('\n', 1)[0].strip()
-        if sender_chat := reply_to.sender_chat:
-            tag = sender_chat.title
-        elif not reply_to.from_user.is_bot:
-            if username := reply_to.from_user.username:
-                tag = f"@{username}"
-            else:
-                tag = reply_to.from_user.mention
     user_id = message.from_user.id
     buttons = ButtonMaker()
-    if not await isAdmin(message, user_id):
-        if await request_limiter(message):
-            return
-        if message.chat.type != message.chat.type.PRIVATE:
-            msg, buttons = await checking_access(user_id, buttons)
-            if msg is not None:
-                msg += f'\n\n<b>User</b>: {tag}'
-                tmsg = await sendMessage(message, msg, buttons.build_menu(1))
-                await auto_delete_message(message, tmsg)
-                return
-    key = message.text.split()
+    key = message.text.split() if message.text else ['/cmd']
     SEARCH_PLUGINS = config_dict['SEARCH_PLUGINS']
-    smsg = None
+    msg, btn = await checking_access(user_id)
+    if msg is not None:
+        await sendMessage(message, msg, btn.build_menu(1))
+        return
     if SITES is None and not SEARCH_PLUGINS:
         await sendMessage(message, "No API link or search PLUGINS added for this function")
     elif len(key) == 1 and SITES is None:
-        smsg = await sendMessage(message, f"Send a search key along with command\n\ncc: {tag}")
+        await sendMessage(message, "Send a search key along with command")
     elif len(key) == 1:
         buttons.ibutton('Trending', f"torser {user_id} apitrend")
         buttons.ibutton('Recent', f"torser {user_id} apirecent")
         buttons.ibutton("Cancel", f"torser {user_id} cancel")
         button = buttons.build_menu(2)
-        smsg = await sendMessage(message, f"Send a search key along with command\n\ncc: {tag}", button)
+        await sendMessage(message, "Send a search key along with command", button)
     elif SITES is not None and SEARCH_PLUGINS:
         buttons.ibutton('Api', f"torser {user_id} apisearch")
         buttons.ibutton('Plugins', f"torser {user_id} plugin")
@@ -282,9 +240,6 @@ async def torrentSearch(_, message):
     else:
         button = await __plugin_buttons(user_id)
         await sendMessage(message, 'Choose site to search | Plugins:', button)
-    if smsg:
-        await delete_links(message)
-        await auto_delete_message(message, smsg)
 
 
 @new_task
@@ -322,10 +277,10 @@ async def torrentSearchUpdate(_, query):
         await __search(key, site, message, method)
     else:
         await query.answer()
-        smsg = await editMessage(message, "Search has been canceled!")
-        await delete_links(message.reply_to_message)
-        await auto_delete_message(message, smsg)
+        await editMessage(message, "Search has been canceled!")
 
 
-bot.add_handler(MessageHandler(torrentSearch, filters=command(BotCommands.SearchCommand) & CustomFilters.authorized))
-bot.add_handler(CallbackQueryHandler(torrentSearchUpdate, filters=regex("^torser")))
+bot.add_handler(MessageHandler(torrentSearch, filters=command(
+    BotCommands.SearchCommand) & CustomFilters.authorized & ~CustomFilters.blacklisted))
+bot.add_handler(CallbackQueryHandler(
+    torrentSearchUpdate, filters=regex("^torser")))

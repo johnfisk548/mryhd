@@ -1,23 +1,16 @@
 #!/usr/bin/env python3
-from mega import MegaApi
-
-from bot.helper.ext_utils.bot_utils import (MirrorStatus,
-                                            get_readable_file_size,
-                                            get_readable_time)
-
-engine_ = f"MegaSDK v{MegaApi('test').getVersion()}"
+from bot.helper.ext_utils.bot_utils import EngineStatus, get_readable_file_size, MirrorStatus, get_readable_time
 
 
 class MegaDownloadStatus:
 
-    def __init__(self, name, size, gid, obj, message, extra_details):
+    def __init__(self, name, size, gid, obj, message, upload_details):
         self.__obj = obj
         self.__name = name
         self.__size = size
         self.__gid = gid
         self.message = message
-        self.extra_details = extra_details
-        self.engine = engine_
+        self.upload_details = upload_details
 
     def name(self):
         return self.__name
@@ -56,3 +49,6 @@ class MegaDownloadStatus:
 
     def download(self):
         return self.__obj
+
+    def eng(self):
+        return EngineStatus().STATUS_MEGA

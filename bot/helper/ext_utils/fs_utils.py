@@ -9,10 +9,8 @@ from subprocess import run as srun
 from sys import exit as sexit
 
 from .exceptions import NotSupportedExtractionArchive
-from bot import aria2, LOGGER, DOWNLOAD_DIR, get_client, GLOBAL_EXTENSION_FILTER
-from bot.helper.ext_utils.bot_utils import sync_to_async, cmd_exec, async_to_sync
-from bot.helper.ext_utils.telegraph_helper import telegraph
-
+from bot import bot_cache, aria2, LOGGER, DOWNLOAD_DIR, get_client, GLOBAL_EXTENSION_FILTER
+from bot.helper.ext_utils.bot_utils import sync_to_async, cmd_exec
 
 ARCH_EXT = [".tar.bz2", ".tar.gz", ".bz2", ".gz", ".tar.xz", ".tar", ".tbz2", ".tgz", ".lzma2",
             ".zip", ".7z", ".z", ".rar", ".iso", ".wim", ".cab", ".apm", ".arj", ".chm",
@@ -42,12 +40,12 @@ async def clean_target(path):
         if await aiopath.isdir(path):
             try:
                 await aiormtree(path)
-            except:
+            except Exception:
                 pass
         elif await aiopath.isfile(path):
             try:
                 await aioremove(path)
-            except:
+            except Exception:
                 pass
 
 
@@ -56,8 +54,7 @@ async def clean_download(path):
         LOGGER.info(f"Cleaning Download: {path}")
         try:
             await aiormtree(path)
-            LOGGER.info(f"Done cleaning: {path}")
-        except KeyError:
+        except Exception:
             pass
 
 
@@ -65,21 +62,17 @@ async def start_cleanup():
     get_client().torrents_delete(torrent_hashes="all")
     try:
         await aiormtree(DOWNLOAD_DIR)
-    except:
+    except Exception:
         pass
     await makedirs(DOWNLOAD_DIR, exist_ok=True)
 
 
 def clean_all():
     aria2.remove_all(True)
-    try:
-        get_client().torrents_delete(torrent_hashes="all")
-    except:
-        pass
-    async_to_sync(telegraph.revoke_access_token)
+    get_client().torrents_delete(torrent_hashes="all")
     try:
         rmtree(DOWNLOAD_DIR)
-    except:
+    except Exception:
         pass
 
 
@@ -88,7 +81,7 @@ def exit_clean_up(signal, frame):
         LOGGER.info(
             "Please wait, while we clean up and stop the running downloads")
         clean_all()
-        srun(['pkill', '-9', '-f', '-e','gunicorn|buffet|openstack|render|zcl'])
+        srun(['pkill', '-9', '-f', f'gunicorn|{bot_cache["pkgs"][-1]}'])
         sexit(0)
     except KeyboardInterrupt:
         LOGGER.warning("Force Exiting before the cleanup finishes!")
@@ -101,7 +94,7 @@ async def clean_unwanted(path):
         for filee in files:
             if filee.endswith(".!qB") or filee.endswith('.parts') and filee.startswith('.'):
                 await aioremove(ospath.join(dirpath, filee))
-        if dirpath.endswith((".unwanted", "splited_files_z", "copied_z")):
+        if dirpath.endswith((".unwanted", "splited_files_mltb", "copied_mltb")):
             await aiormtree(dirpath)
     for dirpath, _, files in await sync_to_async(walk, path, topdown=False):
         if not await listdir(dirpath):
@@ -149,6 +142,19 @@ def get_mime_type(file_path):
     return mime_type
 
 
+def check_storage_threshold(size, threshold, arch=False, alloc=False):
+    free = disk_usage(DOWNLOAD_DIR).free
+    if not alloc:
+        if (not arch and free - size < threshold or arch and free - (size * 2) < threshold):
+            return False
+    elif not arch:
+        if free < threshold:
+            return False
+    elif free - size < threshold:
+        return False
+    return True
+
+
 async def join_files(path):
     files = await listdir(path)
     results = []
@@ -169,21 +175,3 @@ async def join_files(path):
             for file_ in files:
                 if re_search(fr"{res}\.0[0-9]+$", file_):
                     await aioremove(f'{path}/{file_}')
-
-
-def check_storage_threshold(size, threshold, arch=False, alloc=False):
-    free = disk_usage(DOWNLOAD_DIR).free
-    if not alloc:
-        if (
-            not arch
-            and free - size < threshold
-            or arch
-            and free - (size * 2) < threshold
-        ):
-            return False
-    elif not arch:
-        if free < threshold:
-            return False
-    elif free - size < threshold:
-        return False
-    return True

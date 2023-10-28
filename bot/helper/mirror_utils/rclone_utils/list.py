@@ -1,28 +1,25 @@
 #!/usr/bin/env python3
-from asyncio import Event, wait_for, wrap_future
+from asyncio import wait_for, Event, wrap_future
+from aiofiles.os import path as aiopath
+from aiofiles import open as aiopen
 from configparser import ConfigParser
+from pyrogram.handlers import CallbackQueryHandler
+from pyrogram.filters import regex, user
 from functools import partial
 from json import loads
 from time import time
 
-from aiofiles import open as aiopen
-from aiofiles.os import path as aiopath
-from pyrogram.filters import regex, user
-from pyrogram.handlers import CallbackQueryHandler
-
-from bot import LOGGER, config_dict, user_data
-from bot.helper.ext_utils.bot_utils import (cmd_exec, get_readable_file_size,
-                                            get_readable_time, new_task,
-                                            new_thread, update_user_ldata)
-from bot.helper.ext_utils.db_handler import DbManager
+from bot import LOGGER, config_dict, bot_cache
+from bot.helper.ext_utils.db_handler import DbManger
 from bot.helper.telegram_helper.button_build import ButtonMaker
-from bot.helper.telegram_helper.message_utils import editMessage, sendMessage
+from bot.helper.telegram_helper.message_utils import sendMessage, editMessage, deleteMessage
+from bot.helper.ext_utils.bot_utils import cmd_exec, new_thread, get_readable_file_size, new_task, get_readable_time
 
 LIST_LIMIT = 6
 
 
 @new_task
-async def path_updates(_, query, obj):
+async def path_updates(client, query, obj):
     await query.answer()
     message = query.message
     data = query.data.split()
@@ -31,7 +28,7 @@ async def path_updates(_, query, obj):
         obj.path = ''
         obj.is_cancelled = True
         obj.event.set()
-        await message.delete()
+        await deleteMessage(message)
         return
     if obj.query_proc:
         return
@@ -58,7 +55,7 @@ async def path_updates(_, query, obj):
         if data[2] == 'fo':
             await obj.get_path()
         else:
-            await message.delete()
+            await deleteMessage(message)
             obj.event.set()
     elif data[1] == 'ps':
         if obj.page_step == int(data[2]):
@@ -72,17 +69,17 @@ async def path_updates(_, query, obj):
         obj.item_type = data[2]
         await obj.get_path()
     elif data[1] == 'cur':
-        await message.delete()
+        await deleteMessage(message)
         obj.event.set()
     elif data[1] == 'def':
-        path = f'{obj.remote}{obj.path}' if obj.config_path == 'rcl.conf' else f'mrcc:{obj.remote}{obj.path}'
-        if path != obj.user_dict.get('rclone_path'):
-            update_user_ldata(obj.user_id, 'rclone_path', path)
+        path = f'{obj.remote}{obj.path}' if obj.config_path == 'wcl.conf' else f'mrcc:{obj.remote}{obj.path}'
+        if path != config_dict['RCLONE_PATH']:
+            config_dict['RCLONE_PATH'] = path
             await obj.get_path_buttons()
             if config_dict['DATABASE_URL']:
-                await DbManager().update_user_data(obj.user_id)
+                await DbManger().update_config({'RCLONE_PATH': path})
     elif data[1] == 'owner':
-        obj.config_path = 'rcl.conf'
+        obj.config_path = 'wcl.conf'
         obj.path = ''
         obj.remote = ''
         await obj.list_remotes()
@@ -96,6 +93,7 @@ async def path_updates(_, query, obj):
 
 class RcloneList:
     def __init__(self, client, message):
+        self.__user_id = message.from_user.id
         self.__rc_user = False
         self.__rc_owner = False
         self.__client = client
@@ -104,14 +102,12 @@ class RcloneList:
         self.__reply_to = None
         self.__time = time()
         self.__timeout = 240
-        self.user_id = message.from_user.id
-        self.user_dict = user_data.get(self.user_id, {})
         self.remote = ''
         self.is_cancelled = False
         self.query_proc = False
         self.item_type = '--dirs-only'
         self.event = Event()
-        self.user_rcc_path = f'rcl/{self.user_id}.conf'
+        self.user_rcc_path = f'wcl/{self.__user_id}.conf'
         self.config_path = ''
         self.path = ''
         self.list_status = ''
@@ -123,7 +119,7 @@ class RcloneList:
     async def __event_handler(self):
         pfunc = partial(path_updates, obj=self)
         handler = self.__client.add_handler(CallbackQueryHandler(
-            pfunc, filters=regex('^rcq') & user(self.user_id)), group=-1)
+            pfunc, filters=regex('^rcq') & user(self.__user_id)), group=-1)
         try:
             await wait_for(self.event.wait(), timeout=self.__timeout)
         except:
@@ -166,13 +162,17 @@ class RcloneList:
             buttons.ibutton('Next', 'rcq nex', position='footer')
         if self.list_status == 'rcd':
             if self.item_type == '--dirs-only':
-                buttons.ibutton('Files', 'rcq itype --files-only', position='footer')
+                buttons.ibutton(
+                    'Files', 'rcq itype --files-only', position='footer')
             else:
-                buttons.ibutton('Folders', 'rcq itype --dirs-only', position='footer')
+                buttons.ibutton(
+                    'Folders', 'rcq itype --dirs-only', position='footer')
         if self.list_status == 'rcu' or len(self.path_list) > 0:
-            buttons.ibutton('Choose Current Path', 'rcq cur', position='footer')
+            buttons.ibutton('Choose Current Path',
+                            'rcq cur', position='footer')
         if self.list_status == 'rcu':
-            buttons.ibutton('Set as Default Path', 'rcq def', position='footer')
+            buttons.ibutton('Set as Default Path',
+                            'rcq def', position='footer')
         if self.path or len(self.__sections) > 1 or self.__rc_user and self.__rc_owner:
             buttons.ibutton('Back', 'rcq back pa', position='footer')
         if self.path:
@@ -197,13 +197,14 @@ class RcloneList:
             self.item_type == itype
         elif self.list_status == 'rcu':
             self.item_type == '--dirs-only'
-        cmd = ['zcl', 'lsjson', self.item_type, '--fast-list', '--no-mimetype',
+        cmd = [bot_cache['pkgs'][3], 'lsjson', self.item_type, '--fast-list', '--no-mimetype',
                '--no-modtime', '--config', self.config_path, f"{self.remote}{self.path}"]
         if self.is_cancelled:
             return
         res, err, code = await cmd_exec(cmd)
         if code not in [0, -9]:
-            LOGGER.error(f'While rclone listing. Path: {self.remote}{self.path}. Stderr: {err}')
+            LOGGER.error(
+                f'While rclone listing. Path: {self.remote}{self.path}. Stderr: {err}')
             self.remote = err[:4000]
             self.path = ''
             self.event.set()
@@ -256,7 +257,7 @@ class RcloneList:
             button = buttons.build_menu(2)
             await self.__send_list_message(msg, button)
         else:
-            self.config_path = 'rcl.conf' if self.__rc_owner else self.user_rcc_path
+            self.config_path = 'wcl.conf' if self.__rc_owner else self.user_rcc_path
             await self.list_remotes()
 
     async def back_from_path(self):
@@ -274,7 +275,7 @@ class RcloneList:
         future = self.__event_handler()
         if config_path is None:
             self.__rc_user = await aiopath.exists(self.user_rcc_path)
-            self.__rc_owner = await aiopath.exists('rcl.conf')
+            self.__rc_owner = await aiopath.exists('wcl.conf')
             if not self.__rc_owner and not self.__rc_user:
                 self.event.set()
                 return 'Rclone Config not Exists!'
@@ -283,7 +284,7 @@ class RcloneList:
             self.config_path = config_path
             await self.list_remotes()
         await wrap_future(future)
-        await self.__reply_to.delete()
-        if self.config_path != 'rcl.conf' and not self.is_cancelled:
+        await deleteMessage(self.__reply_to)
+        if self.config_path != 'wcl.conf' and not self.is_cancelled:
             return f'mrcc:{self.remote}{self.path}'
         return f'{self.remote}{self.path}'
