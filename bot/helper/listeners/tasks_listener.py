@@ -31,7 +31,7 @@ from bot.helper.mirror_utils.status_utils.rclone_status import RcloneStatus
 from bot.helper.mirror_utils.status_utils.split_status import SplitStatus
 from bot.helper.mirror_utils.status_utils.telegram_status import TelegramStatus
 from bot.helper.mirror_utils.status_utils.zip_status import ZipStatus
-from bot.helper.mirror_utils.upload_utils.gdriveTools import GoogleDriveHelper
+from bot.helper.mirror_utils.gdrive_utils.upload import gdUpload
 from bot.helper.mirror_utils.upload_utils.pyrogramEngine import TgUploader
 from bot.helper.telegram_helper.button_build import ButtonMaker
 from bot.helper.telegram_helper.message_utils import (auto_delete_message,
@@ -378,7 +378,7 @@ class MirrorLeechListener:
         elif self.upPath == 'gd':
             size = await get_path_size(up_path)
             LOGGER.info(f"Upload Name: {up_name}")
-            drive = GoogleDriveHelper(up_name, up_dir, self)
+            drive = gdUpload(up_name, up_dir, self)
             upload_status = GdriveStatus(drive, size, self.message, gid, 'up', self.extra_details)
             async with download_dict_lock:
                 download_dict[self.uid] = upload_status
@@ -393,7 +393,7 @@ class MirrorLeechListener:
             await update_all_messages()
             await RCTransfer.upload(up_path, size)
 
-    async def onUploadComplete(self, link, size, files, folders, mime_type, name, rclonePath=''):
+    async def onUploadComplete(self, link, size, files, folders, mime_type, name, rclonePath='', dir_id=''):
         if DATABASE_URL and config_dict['STOP_DUPLICATE_TASKS'] and self.raw_url:
             await DbManager().remove_download(self.raw_url)
         if self.isSuperGroup and config_dict['INCOMPLETE_TASK_NOTIFIER'] and DATABASE_URL:
@@ -487,15 +487,13 @@ class MirrorLeechListener:
                 elif not rclonePath:
                     INDEX_URL = self.index_link if self.drive_id else config_dict['INDEX_URL']
                     if INDEX_URL:
-                        url_path = url_quote(f'{name}')
-                        share_url = f'{INDEX_URL}/{url_path}'
+                        share_url = f"{INDEX_URL}findpath?id={dir_id}"
                         if mime_type == "Folder":
-                            share_url += '/'
                             buttons.ubutton("📁 Direct Link", share_url)
                         else:
                             buttons.ubutton("🔗 Direct Link", share_url)
-                            if mime_type.startswith(('image', 'video', 'audio')):
-                                share_urls = f'{INDEX_URL}/{url_path}?a=view'
+                            if mime_type.startswith(("image", "video", "audio")):
+                                share_urls = f"{INDEX_URL}findpath?id={dir_id}&view=true"
                                 buttons.ubutton("🌐 View Link", share_urls)
                 buttons = extra_btns(buttons)
                 if self.dmMessage:

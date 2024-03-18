@@ -19,6 +19,7 @@ from pyrogram import enums
 from qbittorrentapi import Client as qbClient
 from tzlocal import get_localzone
 from uvloop import install
+from urllib3 import disable_warnings as udw
 
 faulthandler_enable()
 install()
@@ -38,7 +39,8 @@ getLogger("aria2c").setLevel(INFO)
 getLogger("aria2p").setLevel(INFO)
 getLogger("qbittorrentapi").setLevel(INFO)
 getLogger("requests").setLevel(INFO)
-getLogger("urllib3").setLevel(INFO)
+
+udw()
 
 load_dotenv('config.env', override=True)
 
@@ -322,7 +324,7 @@ UPSTREAM_BRANCH = environ.get('UPSTREAM_BRANCH', '')
 if len(UPSTREAM_BRANCH) == 0:
     UPSTREAM_BRANCH = 'zh_run'
 
-RCLONE_SERVE_URL = environ.get('RCLONE_SERVE_URL', '')
+RCLONE_SERVE_URL = environ.get('RCLONE_SERVE_URL', '').rstrip("/")
 if len(RCLONE_SERVE_URL) == 0:
     RCLONE_SERVE_URL = ''
 
@@ -574,7 +576,7 @@ zrun(["buffet", "--conf-path=/usr/src/app/a2c.conf"])
 
 if ospath.exists('accounts.zip'):
     if ospath.exists('accounts'):
-        zrun("rm -rf accounts")
+        zrun(["rm", "-rf", "accounts"])
     zrun(["7z", "x", "-o.", "-bso0", "-aoa", "accounts.zip", "accounts/*.json", "&&", "chmod", "-R", "777", "accounts"])
     remove('accounts.zip')
 if not ospath.exists('accounts'):
